@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parc national des Pyrénées</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.16.0/dist/maplibre-gl.css">
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; } /* la carte occupe toute la fenêtre */
+    #panneau {
+      position: absolute; top: 10px; right: 10px; max-height: calc(100% - 60px); overflow: auto;
+      background: white; padding: 6px 10px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      font-size: 13px; line-height: 1.7;
+    }
+    #panneau summary { cursor: pointer; font-weight: bold; }
+    #panneau .titre { margin: 6px 0 0; font-weight: bold; }
+    #panneau label { display: block; }
+    #panneau img { vertical-align: middle; }
+    .trait { display: inline-block; width: 18px; vertical-align: middle; } /* symbole d'une surface ou d'une ligne */
+  </style>
+  <script src="https://unpkg.com/pmtiles@4.5.0/dist/pmtiles.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+  
+  <details id="panneau" open>
+    <summary>Couches et légende</summary>
+    <p class="titre">Fond</p>
+    <label><input type="radio" name="fond" value="plan" checked> Plan IGN</label>
+    <label><input type="radio" name="fond" value="photos"> Photographies aériennes</label>
+    <p class="titre">Parc national</p>
+    <label><input type="checkbox" value="coeur" checked> <span class="trait" style="height: 10px; background: rgba(65, 171, 93, 0.25); border: 1px solid #006d2c;"></span> cœur</label>
+    <label><input type="checkbox" value="aire" checked> <span class="trait" style="border-top: 2px dashed #41ab5d;"></span> aire d'adhésion</label>
+    <label><input type="checkbox" value="communes" checked> <span class="trait" style="border-top: 1px solid #525252;"></span> limite de commune</label>
+  </details>
+
+  <script type="module">
+    // MapLibre en module, version épinglée : une nouvelle version ne change pas la page
+    import * as maplibregl from "https://unpkg.com/maplibre-gl@6.16.0/dist/maplibre-gl.mjs";
+
+    // La carte, sur le fond Plan IGN, cadrée sur le parc
+    const map = new maplibregl.Map({
+      container: "map", // l'identifiant du <div> qui reçoit la carte
+      style: "https://data.geopf.fr/annexes/ressources/vectorTiles/styles/PLAN.IGN/standard.json", // le style du Plan IGN
+      attributionControl: { customAttribution: "Plan IGN (c) IGN" }, // la mention de crédit du fond
+    });
+    map.fitBounds([[-0.697, 42.673], [0.367, 43.178]], { animate: false });
+    map.addControl(new maplibregl.NavigationControl(), "top-left");
+    map.addControl(new maplibregl.ScaleControl(), "bottom-left");
+    window.map = map;
+
+    // Ajout PMTiles
+    const protocole = new pmtiles.Protocol(); // pmtiles : la variable créée par le script de <head>
+    maplibregl.addProtocol("pmtiles", protocole.tile); // une adresse pmtiles://... passe par lui
+    
+    // Crédits
+    const DREAL = "Cœur, aire d'adhésion : DREAL Nouvelle-Aquitaine"; // sur trois sources
+    const IGN = "Communes: IGN, ADMIN EXPRESS COG CARTO PE";
+    const INSEE = "Population : INSEE";
+
+    map.on("load", async () => { // un second abonné ; async : il attend les fichiers
+      // Les couches du parc se glissent sous les écritures du Plan IGN, en haut de la pile
+      const couchesDuStyle = map.getStyle().layers; // de la plus basse à la plus haute
+      let ecritures; // la plus basse de ces écritures
+      for (let i = couchesDuStyle.length - 1; i >= 0; i--) { // du haut de la pile vers le bas
+        if (couchesDuStyle[i].type !== "symbol") break; // pas une écriture : on s'arrête
+        ecritures = couchesDuStyle[i].id;
+      }
+
+      map.addSource("parc", { type: "vector", url: "pmtiles://donnees/parc.pmtiles",
+        attribution: DREAL + " | " + IGN + " | " + INSEE
+       });
+      
+      map.addLayer({
+        id: "communes",
+        type: "fill", // une surface sans couleur : seul son contour se voit
+        source: "parc", 
+        "source-layer": "communes",
+        paint: {
+          "fill-color": "#525252", // intérieur entièrement transparent
+          "fill-outline-color": "#525252",
+          "fill-opacity": [ 
+            "case", ["boolean", ["feature-state", "survol"], false], // si l'état survol est posé :
+            0.1, // plus opaque
+            0.0 // sinon, l'aplat transparent
+          ],
+        },
+      }, ecritures);
+      map.addLayer({
+        id: "communes_contour",
+        type: "line",
+        source: "parc", 
+        "source-layer": "communes",
+        paint: {
+          "line-color": "#525252",
+          "line-width": 1,
+          //"line-dasharray": [4, 3], // tiret puis blanc, en largeurs de trait : 6 et 4 pixels
+        },
+      }, ecritures);
+
+      map.addLayer({
+        id: "aire",
+        type: "line", // le contour seul
+        source: "parc", 
+        "source-layer": "aire", 
+        paint: {
+          "line-color": "#41ab5d",
+          "line-width": 2,
+          "line-dasharray": [4, 2], // tiret puis blanc, en largeurs de trait : 6 et 4 pixels
+        },
+      }, ecritures);
+
+      map.addLayer({
+        id: "coeur", 
+        type: "fill", 
+        source: "parc", 
+        "source-layer": "coeur",
+        paint: {
+          "fill-color": "#41ab5d",
+          "fill-opacity": [ 
+            "case", ["boolean", ["feature-state", "survol"], false], // si l'état survol est posé :
+            0.45, // plus opaque
+            0.25 // sinon, l'aplat transparent
+          ],
+          "fill-outline-color": "#006d2c",
+        },
+      }, ecritures); // second argument : la couche est insérée sous celle-ci
+      
+      // Photographies aériennes (WMTS) masquées à l'ouverture
+      const adressePhotos = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0" // le WMTS
+        + "&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg"
+        + "&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}";
+      map.addSource("photos", {
+        type: "raster", // des images, en tuiles
+        tiles: [adressePhotos], // MapLibre remplace {z}, {y} et {x} pour chaque tuile
+        tileSize: 256, // les tuiles du WMTS font 256 pixels de côté
+        attribution: "Photographies aériennes © IGN",
+      });
+      // Les photographies se glissent dans la pile du fond, sous les communes : les écritures du
+      // Plan IGN, plus haut dans la pile, restent lisibles. 
+      map.addLayer({
+        id: "photos",
+        type: "raster",
+        source: "photos",
+        layout: { visibility: "none" }, // masquée à l'ouverture
+      }, "communes"); // insérée sous les communes
+
+      // Les cases et les boutons du panneau montrent ou masquent les couches
+      for (const caseACocher of document.querySelectorAll("#panneau input[type=checkbox]")) {
+        caseACocher.addEventListener("change", () => {
+          const visibilite = caseACocher.checked ? "visible" : "none";
+          map.setLayoutProperty(caseACocher.value, "visibility", visibilite); // value : la couche
+        });
+      }
+      // Effacer la couche contour communes lorsqu'on décoche la case "communes"
+      document.querySelector('input[value="communes"]')
+        .addEventListener("change", (e) => {
+            const visibilite = e.target.checked ? "visible" : "none";
+            map.setLayoutProperty("communes", "visibility", visibilite);
+            map.setLayoutProperty("communes_contour", "visibility", visibilite);
+        });
+
+      for (const bouton of document.querySelectorAll(
+          '#panneau input[name="fond"]')) {
+          bouton.addEventListener("change", () => {
+
+              // Gestion de la visibilité du fond photographique
+              const visibilite = bouton.value === "photos"
+                  ? "visible"
+                  : "none";
+              map.setLayoutProperty("photos", "visibility", visibilite);
+
+              // Gestion de la couleur du contour des communes
+              const couleur = bouton.value === "photos"
+                  ? "#aaaa55"
+                  : "#525252";
+
+              map.setPaintProperty(
+                  "communes_contour",
+                  "line-color",
+                  couleur
+              );
+          });
+      }
+
+
+      // Info-bulle et mise en évidence au survol des communes
+      const infoBulle = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 12 });
+      let survolee = null; // l'entité mise en évidence, { source, id }, ou null
+
+      function eteindre() { // éteint l'entité mise en évidence, s'il y en a une
+        if (survolee !== null) {
+          map.setFeatureState(survolee, { survol: false });
+          survolee = null;
+        }
+      }
+
+      map.on("mousemove", (e) => { // à chaque déplacement du pointeur sur la carte
+        eteindre(); // l'entité survolée juste avant
+        const entites = map.queryRenderedFeatures(e.point, { // sous le pointeur, la plus haute d'abord
+          layers: ["communes"],
+        });
+        if (entites.length === 0) {
+          infoBulle.remove();
+          map.getCanvas().style.cursor = "";
+          return;
+        }
+        const entite = entites[0]; // celle qui est dessinée au-dessus des autres
+        const champs = entite.properties;
+        let texte;
+        texte = "<b>" + champs.nom + "</b><br>";
+        texte += "Population : " + champs.population + "<br>";
+        texte += "♥ PNP : " + Number(champs.part_surf_coeur).toFixed(1) + " %";
+        
+        infoBulle.setLngLat(e.lngLat).setHTML(texte).addTo(map); // texte lu comme du HTML
+        map.getCanvas().style.cursor = "pointer"; // la main : l'entité réagit au pointeur
+        survolee = {
+          source: entite.source,
+          sourceLayer: entite.sourceLayer,
+          id: entite.id }; 
+        map.setFeatureState(survolee, { survol: true });
+      });
+
+      map.on("mouseout", () => { // le pointeur quitte la carte
+        infoBulle.remove();
+        eteindre();
+        map.getCanvas().style.cursor = "";
+      });
+      
+    });
+  </script>
+</body>
+</html>
